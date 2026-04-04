@@ -1,7 +1,6 @@
 import os
 import pickle as pkl
 import contextlib
-import heapq
 from id_map import IdMap
 from index_io import InvertedIndexWriter, InvertedIndexIterator
 
@@ -16,8 +15,6 @@ class BSBIIndex:
         self.output_dir = output_dir
         self.index_name = index_name
         self.postings_encoding = postings_encoding
-
-        # Stores names of intermediate indices
         self.intermediate_indices = []
 
     def save(self):
@@ -69,10 +66,7 @@ class BSBIIndex:
         for filename in os.listdir(block_path):
             file_path = os.path.join(block_path, filename)
             
-            # TODO_1: 构造 doc_relative_path (例如 "0/filename")
-            ### Begin your code
-            doc_relative_path = ""
-            ### End your code
+            doc_relative_path = os.path.join(block_dir_relative, filename)
             
             doc_id = self.doc_id_map[doc_relative_path]
             
@@ -81,10 +75,7 @@ class BSBIIndex:
                 tokens = content.split()
                 
                 for token in tokens:
-                    # TODO_2: 利用 self.term_id_map 获取 term_id
-                    ### Begin your code
-                    term_id = -1
-                    ### End your code
+                    term_id = self.term_id_map[token]
                     
                     td_pairs.append((term_id, doc_id))
                     
@@ -95,52 +86,111 @@ class BSBIIndex:
         if not td_pairs:
             return
             
-        # 1. 原址排序 (以 termID 为主，docID 为辅)
         td_pairs.sort()
         
-        # 2. 状态机寄存器初始化
         current_term = None
         current_postings = []
         
-        # 3. 线性扫描与聚合
         for term_id, doc_id in td_pairs:
             if term_id != current_term:
                 if current_term is not None:
-                    # TODO_3: 状态边界翻转，将当前收集完毕的倒排表落盘
-                    ### Begin your code
-                    pass
-                    ### End your code
-                    
+                    #落盘旧的term
+                    index.append(current_term, current_postings)
+                
+                #更新新的current_term
                 current_term = term_id
                 current_postings = [doc_id]
             else:
-                # TODO_4: 保持追踪态，O(1) 去重逻辑，确保递增且不重复
-                ### Begin your code
-                pass
-                ### End your code
+                if not current_postings or current_postings[-1] != doc_id:
+                    #去重
+                    current_postings.append(doc_id)
                 
-        # 4. 终态清理 (EOF)
         if current_term is not None:
-            # TODO_5: 补全最后一次强制落盘逻辑
-            ### Begin your code
-            pass
-            ### End your code
+            index.append(current_term, current_postings)
 
     def merge(self, indices, merged_index):
-        """Merges multiple inverted indices into a single index"""
-        # TODO_6: 实现外部多路归并逻辑
-        # 提示：利用 heapq.merge 和 InvertedIndexIterator 的特性
-        ### Begin your code
-        pass
-        ### End your code
+        """Merges multiple inverted indices into a single index
+        
+        Parameters
+        ----------
+        indices: List[InvertedIndexIterator]
+            A list of InvertedIndexIterator objects, each representing an
+            iterable inverted index for a block
+        merged_index: InvertedIndexWriter
+            An instance of InvertedIndexWriter object into which each merged 
+            postings list is written out one at a time
+        """
+        import heapq
+        
+        current_term = None
+        current_postings = []
+        
+        merged_iter = heapq.merge(*indices, key=lambda x: x[0])  
+        #参数为x，即posting_list 比较的值为x[0]即可，x内部天然有序
+        
+        for term_id, postings_list in merged_iter:
+            if term_id != current_term:
+                if current_term is not None:
+                    #落盘旧的term
+                    merged_index.append(current_term, current_postings)
+                #更新新的current_term
+                current_term = term_id
+                current_postings = postings_list
+
+            else:
+                #天然有序性，直接extend即可
+                current_postings.extend(postings_list)
+                
+        if current_term is not None:
+            merged_index.append(current_term, current_postings)
 
     def retrieve(self, query):
-        """Retrieves the documents corresponding to the conjunctive query"""
+        """Retrieves the documents corresponding to the conjunctive query
+        
+        Parameters
+        ----------
+        query: str
+            Space separated list of query tokens
+            
+        Result
+        ------
+        List[str]
+            Sorted list of documents which contains each of the query tokens. 
+            Should be empty if no documents are found.
+        
+        Should NOT throw errors for terms not in corpus
+        """
         if len(self.term_id_map) == 0 or len(self.doc_id_map) == 0:
             self.load()
+
+        tokens = query.split()
+        if not tokens:
+            return []
+
+        postings_lists = []
+        
+        with InvertedIndexMapper(self.index_name, directory=self.output_dir, postings_encoding=self.postings_encoding) as mapper:
+            for token in tokens:
+                # 关键!!必须要先查有没有，而不能直接哈希读取
+                # 由于hash表会在不存在的情况下直接插入新的key，导致污染
+                if token not in self.term_id_map.str_to_id:
+                    return []
+                    
+                term_id = self.term_id_map.str_to_id[token]
+                postings = mapper[term_id]
+                postings_lists.append(postings)
+
+        postings_lists.sort(key=len)
+
+        result_doc_ids = postings_lists[0]
+        for i in range(1, len(postings_lists)):
+            result_doc_ids = sorted_intersect(result_doc_ids, postings_lists[i])
+            if not result_doc_ids:
+                return []
+
+        result_paths = []
+        for doc_id in result_doc_ids:
+            doc_path = self.doc_id_map[doc_id]
+            result_paths.append(doc_path)
             
-        # TODO_7: 布尔交集检索逻辑
-        # 提示：获取 query tokens 对应的倒排表 -> sorted_intersect 合并 -> 将 docID 映射为路径列表
-        ### Begin your code
-        pass
-        ### End your code
+        return result_paths
