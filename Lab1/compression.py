@@ -39,10 +39,6 @@ class UncompressedPostings:
 
 
 class CompressedPostings:
-    # TODO: 若需要额外的辅助函数（如计算间距，处理变长字节的高低位运算），可在此处添加
-    ### Begin your code
-    pass
-    ### End your code
     
     @staticmethod
     def encode(postings_list):
@@ -60,10 +56,27 @@ class CompressedPostings:
             Bytes reprsentation of the compressed postings list 
             (as produced by `array.tobytes` function)
         """
-        # TODO: 实现间距编码 (Gap-encoding) 并利用变长字节编码 (Variable Byte Encoding) 转化为字节流
-        ### Begin your code
-        pass
-        ### End your code
+        encoded_bytes = bytearray()
+        last_doc_id = 0
+        
+        for doc_id in postings_list:
+            gap = doc_id - last_doc_id
+            last_doc_id = doc_id
+            
+            chunk_stack = []
+            while True:
+                # 截取低 7 位数据
+                chunk_stack.insert(0, gap & 0x7F)
+                gap >>= 7
+                if gap == 0:
+                    break
+                    
+            # 最高位赋予 1 作为结束标识符
+            chunk_stack[-1] |= 0x80
+            
+            encoded_bytes.extend(chunk_stack)
+            
+        return bytes(encoded_bytes)
 
         
     @staticmethod
@@ -80,17 +93,25 @@ class CompressedPostings:
         List[int]
             Decoded postings list (each posting is a docIds)
         """
-        # TODO: 从字节流中解码出变长字节数值，并通过累加间距还原绝对 docID 列表
-        ### Begin your code
-        pass
-        ### End your code
+        postings_list = []
+        last_doc_id = 0
+        gap = 0
+        
+        for byte in encoded_postings_list:
+            if byte & 0x80:
+                # 遇到结束标识，合并最后 7 位并清算当前 Gap
+                gap = (gap << 7) | (byte & 0x7F)
+                last_doc_id += gap
+                postings_list.append(last_doc_id)
+                gap = 0
+            else:
+                # 未结束，继续累加 7 位数据
+                gap = (gap << 7) | byte
+                
+        return postings_list
 
 
 class ECCompressedPostings:
-    # TODO: 实现额外压缩算法的辅助函数（如 Gamma-encoding 或 Delta-encoding）
-    ### Begin your code
-    pass
-    ### End your code
     
     @staticmethod
     def encode(postings_list):
@@ -106,10 +127,38 @@ class ECCompressedPostings:
         bytes: 
             Bytes reprsentation of the compressed postings list 
         """
-        # TODO: 实现进阶压缩算法的编码过程
-        ### Begin your code
-        pass
-        ### End your code
+        if not postings_list:
+            return b""
+            
+        bit_string = ""
+        last_doc = 0
+        
+        for doc_id in postings_list:
+            gap = doc_id - last_doc
+            last_doc = doc_id
+            
+            # Elias Gamma 编码核心逻辑
+            # 将间距转为无前缀二进制字符串 (例如 13 -> '1101')
+            bin_gap = bin(gap)[2:]
+            
+            # 剥离首位的 1，剩余部分为 offset
+            offset = bin_gap[1:]
+            
+            # 构造一元码：长度为 offset 位数的连续 '1'，以 '0' 结尾
+            unary = '1' * len(offset) + '0'
+            
+            bit_string += unary + offset
+            
+        # 字节对齐：计算需要补 0 的数量
+        padding_len = (8 - len(bit_string) % 8) % 8
+        bit_string += '0' * padding_len
+        
+        # 将二进制字符串每 8 位切割，转为整型并写入字节数组
+        byte_arr = bytearray()
+        for i in range(0, len(bit_string), 8):
+            byte_arr.append(int(bit_string[i:i+8], 2))
+            
+        return bytes(byte_arr)
 
         
     @staticmethod
@@ -126,7 +175,48 @@ class ECCompressedPostings:
         List[int]
             Decoded postings list (each posting is a docId)
         """
-        # TODO: 实现进阶压缩算法的解码过程
-        ### Begin your code
-        pass
-        ### End your code
+        if not encoded_postings_list:
+            return []
+            
+        # 将字节流全部展开为连续的 0/1 字符串，保留前导零
+        bit_string = "".join([f"{byte:08b}" for byte in encoded_postings_list])
+        
+        postings_list = []
+        last_doc = 0
+        
+        idx = 0
+        length = len(bit_string)
+        
+        while idx < length:
+            # 1. 统计一元码长度（连续的 1）
+            unary_count = 0
+            while idx < length and bit_string[idx] == '1':
+                unary_count += 1
+                idx += 1
+                
+            # 若触发边界，或者当前位是 '0' 且后续全为对齐用的填充 '0'，则结束解码
+            if idx >= length or (unary_count == 0 and bit_string[idx] == '0' and all(c == '0' for c in bit_string[idx:])):
+                break
+                
+            # 2. 消耗一元码的结束符 '0'
+            idx += 1
+            
+            # 3. 读取 offset 数据
+            if idx + unary_count > length:
+                break
+                
+            offset_bits = bit_string[idx:idx + unary_count]
+            idx += unary_count
+            
+            # 4. 还原间距并累加绝对 ID
+            # 还原公式：2^unary_count + offset_bits
+            if unary_count > 0:
+                gap = (1 << unary_count) + int(offset_bits, 2)
+            else:
+                # 特殊情况：Gap = 1 时，unary_count = 0，offset 为空
+                gap = 1
+                
+            last_doc += gap
+            postings_list.append(last_doc)
+            
+        return postings_list
