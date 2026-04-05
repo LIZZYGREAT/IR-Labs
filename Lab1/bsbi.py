@@ -76,7 +76,6 @@ class BSBIIndex:
                 
                 for token in tokens:
                     term_id = self.term_id_map[token]
-                    
                     td_pairs.append((term_id, doc_id))
                     
         return td_pairs

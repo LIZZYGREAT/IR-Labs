@@ -44,21 +44,17 @@ class InvertedIndexWriter(InvertedIndex):
         return self
 
     def append(self, term, postings_list):
-        """Appends the term and postings_list to end of the index file.
+        """Appends the term and postings_list to end of the index file."""
+        encoded_bytes = self.postings_encoding.encode(postings_list)
+        length_in_bytes = len(encoded_bytes)
+        number_of_postings = len(postings_list)
         
-        This function does three things, 
-        1. Encodes the postings_list using self.postings_encoding
-        2. Stores metadata in the form of self.terms and self.postings_dict
-           Note that self.postings_dict maps termID to a 3 tuple of 
-           (start_position_in_index_file, 
-           number_of_postings_in_list, 
-           length_in_bytes_of_postings_list)
-        3. Appends the bytestream to the index file on disk
-        """
-        # TODO: 将倒排表编码为字节流 -> 记录当前文件指针位置 -> 写入文件 -> 更新元数据字典
-        ### Begin your code
-        pass
-        ### End your code
+        start_position = self.index_file.tell()
+        
+        self.postings_dict[term] = (start_position, number_of_postings, length_in_bytes)
+        self.terms.append(term)
+        
+        self.index_file.write(encoded_bytes)
 
 
 class InvertedIndexIterator(InvertedIndex):
@@ -70,28 +66,28 @@ class InvertedIndexIterator(InvertedIndex):
         self._initialization_hook()
         return self
 
-    def _initialization_hook(self):
-        """Use this function to initialize the iterator
-        """
-        # TODO: 迭代器初始化逻辑，例如获取 terms 的迭代器
-        ### Begin your code
-        pass
-        ### End your code
-
     def __iter__(self): 
         return self
     
+    def _initialization_hook(self):
+        """Use this function to initialize the iterator"""
+        self.index_file.seek(0)
+
     def __next__(self):
-        """Returns the next (term, postings_list) pair in the index.
+        """Returns the next (term, postings_list) pair in the index."""
+        try:
+            term = next(self.term_iter)
+        except StopIteration:
+            raise StopIteration
+            
+        metadata = self.postings_dict[term]
+        length_in_bytes = metadata[2]
         
-        Note: This function should only read a small amount of data from the 
-        index file. In particular, you should not try to maintain the full 
-        index file in memory.
-        """
-        # TODO: 实现一次只从磁盘读取一个 term 及其倒排记录表的逻辑，并将其解码返回
-        ### Begin your code
-        pass
-        ### End your code
+        encoded_bytes = self.index_file.read(length_in_bytes)
+        
+        postings_list = self.postings_encoding.decode(encoded_bytes)
+        
+        return (term, postings_list)
 
     def delete_from_disk(self):
         """Marks the index for deletion upon exit. Useful for temporary indices
@@ -121,10 +117,18 @@ class InvertedIndexMapper(InvertedIndex):
         I.e., it should only have to read the bytes from the index file
         corresponding to the postings list for the requested term.
         """
-        # TODO: 利用 self.postings_dict 获取偏移量，使用 self.index_file.seek() 随机访问并解码
-        ### Begin your code
-        pass
-        ### End your code
+        if term not in self.postings_dict:
+            return []
+            
+        metadata = self.postings_dict[term]
+        start_position = metadata[0]
+        length_in_bytes = metadata[2]
+        
+        self.index_file.seek(start_position)
+        
+        encoded_bytes = self.index_file.read(length_in_bytes)
+
+        return self.postings_encoding.decode(encoded_bytes)
 
 
     def sorted_intersect(list1, list2):
