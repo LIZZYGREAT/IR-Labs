@@ -131,31 +131,31 @@ class InvertedIndexMapper(InvertedIndex):
         return self.postings_encoding.decode(encoded_bytes)
 
 
-    def sorted_intersect(list1, list2):
-        """Intersects two (ascending) sorted lists and returns the sorted result
+def sorted_intersect(list1, list2):
+    """Intersects two (ascending) sorted lists and returns the sorted result
+    
+    Parameters
+    ----------
+    list1: List[Comparable]
+    list2: List[Comparable]
+        Sorted lists to be intersected
         
-        Parameters
-        ----------
-        list1: List[Comparable]
-        list2: List[Comparable]
-            Sorted lists to be intersected
+    Returns
+    -------
+    List[Comparable]
+        Sorted intersection        
+    """
+    intersection = []
+    i, j = 0, 0
+    
+    while i < len(list1) and j < len(list2):
+        if list1[i] == list2[j]:
+            intersection.append(list1[i])
+            i += 1
+            j += 1
+        elif list1[i] < list2[j]:
+            i += 1
+        else:
+            j += 1
             
-        Returns
-        -------
-        List[Comparable]
-            Sorted intersection        
-        """
-        intersection = []
-        i, j = 0, 0
-        
-        while i < len(list1) and j < len(list2):
-            if list1[i] == list2[j]:
-                intersection.append(list1[i])
-                i += 1
-                j += 1
-            elif list1[i] < list2[j]:
-                i += 1
-            else:
-                j += 1
-                
-        return intersection
+    return intersection

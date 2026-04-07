@@ -1,3 +1,4 @@
 *data
 hw*
 *.pdf
+\__pycache__

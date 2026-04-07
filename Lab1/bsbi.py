@@ -2,8 +2,7 @@ import os
 import pickle as pkl
 import contextlib
 from id_map import IdMap
-from index_io import InvertedIndexWriter, InvertedIndexIterator
-
+from index_io import InvertedIndexWriter, InvertedIndexIterator, InvertedIndexMapper, sorted_intersect
 class BSBIIndex:
     """
     BSBI 倒排索引算法核心调度器
@@ -39,15 +38,43 @@ class BSBIIndex:
         calls invert_write, which inverts each block and writes to a new index
         then saves the id maps and calls merge on the intermediate indices
         """
+        
+        final_index_path = os.path.join(self.output_dir, self.index_name + '.index')
+        final_dict_path = os.path.join(self.output_dir, self.index_name + '.dict')
+        
+        if os.path.exists(final_index_path) and os.path.exists(final_dict_path):
+            print(f"  -> [监控] 最终全局索引 '{self.index_name}' 已存在，直接跳过构建。")
+            self.load() 
+            return
+
+        if os.path.exists(os.path.join(self.output_dir, 'terms.dict')) and \
+           os.path.exists(os.path.join(self.output_dir, 'docs.dict')):
+            self.load()
+
         for block_dir_relative in sorted(next(os.walk(self.data_dir))[1]):
-            td_pairs = self.parse_block(block_dir_relative)
             index_id = 'index_' + block_dir_relative
             self.intermediate_indices.append(index_id)
+            
+            block_index_path = os.path.join(self.output_dir, index_id + '.index')
+            block_dict_path = os.path.join(self.output_dir, index_id + '.dict')
+            
+            if os.path.exists(block_index_path) and os.path.exists(block_dict_path):
+                print(f"  -> [监控] Block {block_dir_relative} 的分块索引已存在，跳过解析。")
+                continue
+
+            print(f"  -> [监控] 正在解析并构建 Block: {block_dir_relative} ...")
+            
+            td_pairs = self.parse_block(block_dir_relative)
             with InvertedIndexWriter(index_id, directory=self.output_dir, 
                                      postings_encoding=self.postings_encoding) as index:
                 self.invert_write(td_pairs, index)
                 td_pairs = None
-        self.save()
+
+            print(f"  -> [监控] Block {block_dir_relative} 排序与落盘完成。")
+            
+            self.save()
+            
+        print("  -> [监控] 所有 Block 处理完毕，正在执行多路归并合并 (Merge)...")
         with InvertedIndexWriter(self.index_name, directory=self.output_dir, 
                                  postings_encoding=self.postings_encoding) as merged_index:
             with contextlib.ExitStack() as stack:
