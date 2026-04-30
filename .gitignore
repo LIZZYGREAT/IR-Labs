@@ -15,3 +15,7 @@ hw*
 *.ipynb
 *document
 *ms_marco
+*build
+*docs
+*.png
+*.exe
