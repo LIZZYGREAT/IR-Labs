@@ -2,3 +2,16 @@
 hw*
 *.pdf
 \__pycache__
+*.docx
+*.mp4
+*.aux
+*.log
+*.toc
+*.tex
+*.txt
+*.gz
+*.out
+*images
+*.ipynb
+*document
+*ms_marco
