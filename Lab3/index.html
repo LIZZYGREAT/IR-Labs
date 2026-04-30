@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>预检索意图增强系统</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f8f9fa; display: flex; flex-direction: column; align-items: center; margin-top: 100px; }
+        .search-container { position: relative; width: 600px; }
+        input { width: 100%; padding: 16px 24px; font-size: 18px; border: 1px solid #dfe1e5; border-radius: 24px; outline: none; box-shadow: 0 1px 6px rgba(32,33,36,.28); box-sizing: border-box; }
+        .dropdown { position: absolute; top: 100%; left: 0; right: 0; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(32,33,36,.28); margin-top: 8px; overflow: hidden; display: none; z-index: 1000; }
+        .result-item { padding: 12px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .result-item:hover { background-color: #f1f3f4; }
+        .word { font-size: 16px; font-weight: 500; color: #202124; }
+        .meta { font-size: 12px; color: #70757a; display: flex; gap: 12px; }
+        .badge { background: #e8f0fe; color: #1a73e8; padding: 2px 6px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+
+    <h2>🔍 预检索系统测试平台</h2>
+    <div class="search-container">
+        <input type="text" id="searchInput" placeholder="尝试输入带有拼写错误的 Query，如: whot was..." autocomplete="off">
+        <div class="dropdown" id="dropdown"></div>
+    </div>
+
+    <script>
+        const input = document.getElementById('searchInput');
+        const dropdown = document.getElementById('dropdown');
+        let timeout = null;
+
+        input.addEventListener('input', (e) => {
+            clearTimeout(timeout);
+            const query = e.target.value.trim();
+            
+            if (!query) {
+                dropdown.style.display = 'none';
+                return;
+            }
+
+            // 防抖机制：用户停止敲击键盘 150ms 后才发送请求，减轻 C++ 后端压力
+            timeout = setTimeout(async () => {
+                try {
+                    const response = await fetch(`http://127.0.0.1:8080/search?q=${encodeURIComponent(query)}`);
+                    const results = await response.json();
+                    
+                    if (results.length > 0) {
+                        renderDropdown(results);
+                    } else {
+                        dropdown.style.display = 'none';
+                    }
+                } catch (error) {
+                    console.error("无法连接到 C++ 后端服务", error);
+                }
+            }, 150);
+        });
+
+        function renderDropdown(results) {
+            dropdown.innerHTML = results.map(r => `
+                <div class="result-item">
+                    <span class="word">${r.word}</span>
+                    <div class="meta">
+                        <span class="badge">耗时: ${r.latency_ms.toFixed(2)}ms</span>
+                        <span class="badge">距离: ${r.distance}</span>
+                        <span class="badge">得分: ${r.score.toFixed(2)}</span>
+                    </div>
+                </div>
+            `).join('');
+            dropdown.style.display = 'block';
+        }
+    </script>
+</body>
+</html>
