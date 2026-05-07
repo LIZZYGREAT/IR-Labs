@@ -4,43 +4,128 @@
     <meta charset="UTF-8">
     <title>预检索意图增强系统</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background-color: #f8f9fa; display: flex; flex-direction: column; align-items: center; margin-top: 100px; }
-        .search-container { position: relative; width: 600px; }
-        input { width: 100%; padding: 16px 24px; font-size: 18px; border: 1px solid #dfe1e5; border-radius: 24px; outline: none; box-shadow: 0 1px 6px rgba(32,33,36,.28); box-sizing: border-box; }
-        .dropdown { position: absolute; top: 100%; left: 0; right: 0; background: white; border-radius: 12px; box-shadow: 0 4px 6px rgba(32,33,36,.28); margin-top: 8px; overflow: hidden; display: none; z-index: 1000; }
-        .result-item { padding: 12px 24px; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
-        .result-item:hover { background-color: #f1f3f4; }
-        .word { font-size: 16px; font-weight: 500; color: #202124; }
-        .meta { font-size: 12px; color: #70757a; display: flex; gap: 12px; }
-        .badge { background: #e8f0fe; color: #1a73e8; padding: 2px 6px; border-radius: 4px; }
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+            background-color: #f8f9fa; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin-top: 80px; 
+        }
+        
+        .header { margin-bottom: 30px; text-align: center; }
+        .header h2 { color: #202124; margin-bottom: 8px; }
+        .header p { color: #5f6368; font-size: 14px; margin: 0; }
+
+        .search-container { position: relative; width: 640px; }
+        
+        input { 
+            width: 100%; 
+            padding: 16px 24px; 
+            font-size: 18px; 
+            border: 1px solid #dfe1e5; 
+            border-radius: 24px; 
+            outline: none; 
+            box-shadow: 0 1px 6px rgba(32,33,36,.28); 
+            box-sizing: border-box; 
+            transition: box-shadow 0.2s;
+        }
+        input:focus { box-shadow: 0 1px 10px rgba(32,33,36,.4); }
+
+        /* 下拉联想框样式 */
+        .dropdown { 
+            position: absolute; 
+            top: 100%; 
+            left: 0; 
+            right: 0; 
+            background: white; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 6px rgba(32,33,36,.28); 
+            margin-top: 8px; 
+            overflow: hidden; 
+            display: none; 
+            z-index: 1000; 
+        }
+        .suggest-item { 
+            padding: 12px 24px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            cursor: pointer; 
+        }
+        .suggest-item:hover { background-color: #f1f3f4; }
+        .suggest-item .word { font-size: 16px; font-weight: 500; color: #202124; }
+        .suggest-item .meta-badge { background: #f1f3f4; color: #5f6368; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+
+        /* 核心检索结果展示区 */
+        .results-container {
+            width: 640px;
+            margin-top: 30px;
+            display: none;
+        }
+        .results-header { font-size: 14px; color: #70757a; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #ebebeb; }
+        .result-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid #dfe1e5;
+            margin-bottom: 12px;
+            transition: box-shadow 0.2s;
+        }
+        .result-card:hover { box-shadow: 0 1px 4px rgba(32,33,36,.1); }
+        .result-card .intent { font-size: 20px; color: #1a0dab; text-decoration: none; font-weight: 500; display: block; margin-bottom: 8px;}
+        .result-card .intent:hover { text-decoration: underline; cursor: pointer; }
+        .result-card .metrics { font-size: 13px; color: #006621; display: flex; gap: 16px; }
+        
+        .loading { text-align: center; color: #70757a; font-size: 14px; display: none; margin-top: 20px; }
     </style>
 </head>
 <body>
 
-    <h2>🔍 预检索系统测试平台</h2>
+    <div class="header">
+        <h2>🔍 预检索意图增强系统</h2>
+        <p>1.输入字符触发 Auto-Complete&nbsp;&nbsp;|&nbsp;&nbsp;2.回车触发 Viterbi Spell Correction</p>
+    </div>
+
     <div class="search-container">
-        <input type="text" id="searchInput" placeholder="尝试输入带有拼写错误的 Query，如: whot was..." autocomplete="off">
+        <input type="text" id="searchInput" placeholder="尝试输入带有拼写错误的 Query，如: what do..." autocomplete="off">
         <div class="dropdown" id="dropdown"></div>
+    </div>
+
+    <div class="loading" id="loading">正在进行全局 DP 容错检索...</div>
+
+    <div class="results-container" id="resultsContainer">
+        <div class="results-header" id="resultsMeta"></div>
+        <div id="resultsList"></div>
     </div>
 
     <script>
         const input = document.getElementById('searchInput');
         const dropdown = document.getElementById('dropdown');
-        let timeout = null;
+        const resultsContainer = document.getElementById('resultsContainer');
+        const resultsList = document.getElementById('resultsList');
+        const resultsMeta = document.getElementById('resultsMeta');
+        const loading = document.getElementById('loading');
+        
+        let suggestTimeout = null;
+        const API_BASE = "http://127.0.0.1:8080";
 
+        // ==========================================
+        // 模式 1：监听键盘输入触发 /suggest
+        // ==========================================
         input.addEventListener('input', (e) => {
-            clearTimeout(timeout);
-            const query = e.target.value.trim();
+            clearTimeout(suggestTimeout);
+            const query = e.target.value;
             
-            if (!query) {
+            if (!query.trim()) {
                 dropdown.style.display = 'none';
+                resultsContainer.style.display = 'none';
                 return;
             }
 
-            // 防抖机制：用户停止敲击键盘 150ms 后才发送请求，减轻 C++ 后端压力
-            timeout = setTimeout(async () => {
+            suggestTimeout = setTimeout(async () => {
                 try {
-                    const response = await fetch(`http://127.0.0.1:8080/search?q=${encodeURIComponent(query)}`);
+                    const response = await fetch(`${API_BASE}/suggest?q=${encodeURIComponent(query)}`);
                     const results = await response.json();
                     
                     if (results.length > 0) {
@@ -49,24 +134,88 @@
                         dropdown.style.display = 'none';
                     }
                 } catch (error) {
-                    console.error("无法连接到 C++ 后端服务", error);
+                    console.error("[联想引擎故障] 无法连接到 C++ 后端服务", error);
                 }
             }, 150);
         });
 
         function renderDropdown(results) {
             dropdown.innerHTML = results.map(r => `
-                <div class="result-item">
-                    <span class="word">${r.word}</span>
-                    <div class="meta">
-                        <span class="badge">耗时: ${r.latency_ms.toFixed(2)}ms</span>
-                        <span class="badge">距离: ${r.distance}</span>
-                        <span class="badge">得分: ${r.score.toFixed(2)}</span>
-                    </div>
+                <div class="suggest-item" onclick="executeSearch('${r.suggestion}')">
+                    <span class="word">${r.suggestion}</span>
+                    <span class="meta-badge">~${r.latency_ms.toFixed(2)}ms</span>
                 </div>
             `).join('');
             dropdown.style.display = 'block';
         }
+
+        // ==========================================
+        // 模式 2：监听 Enter 键触发 /search
+        // ==========================================
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault(); // 阻止默认表单提交
+                clearTimeout(suggestTimeout);
+                dropdown.style.display = 'none';
+                
+                const query = input.value.trim();
+                if (query) {
+                    executeSearch(query);
+                }
+            }
+        });
+
+        // 核心检索执行器
+        async function executeSearch(targetQuery) {
+            // UI 状态重置
+            input.value = targetQuery;
+            dropdown.style.display = 'none';
+            resultsContainer.style.display = 'none';
+            loading.style.display = 'block';
+
+            try {
+                const response = await fetch(`${API_BASE}/search?q=${encodeURIComponent(targetQuery)}`);
+                const results = await response.json();
+                
+                loading.style.display = 'none';
+                
+                if (results.length > 0) {
+                    renderSearchResults(results, targetQuery);
+                } else {
+                    resultsMeta.innerHTML = `找不到和 <b>${targetQuery}</b> 相符的内容。`;
+                    resultsList.innerHTML = '';
+                    resultsContainer.style.display = 'block';
+                }
+            } catch (error) {
+                loading.style.display = 'none';
+                console.error("[检索引擎故障] 无法连接到 C++ 后端服务", error);
+            }
+        }
+
+        function renderSearchResults(results, originalQuery) {
+            const totalLatency = results.reduce((sum, r) => sum + r.latency_ms, 0).toFixed(2);
+            resultsMeta.innerHTML = `为您找到约 ${results.length} 条纠错结果 （总耗时 ${totalLatency} ms）`;
+
+            resultsList.innerHTML = results.map(r => `
+                <div class="result-card">
+                    <a class="intent">${r.word}</a>
+                    <div class="metrics">
+                        <span>❖ 物理惩罚距离: ${r.distance}</span>
+                        <span>❖ 转移概率得分 (Viterbi): ${r.score.toFixed(4)}</span>
+                        <span>❖ 节点耗时: ${r.latency_ms.toFixed(2)}ms</span>
+                    </div>
+                </div>
+            `).join('');
+            
+            resultsContainer.style.display = 'block';
+        }
+
+        // 点击页面空白处隐藏下拉框
+        document.addEventListener('click', (e) => {
+            if (!input.contains(e.target) && !dropdown.contains(e.target)) {
+                dropdown.style.display = 'none';
+            }
+        });
     </script>
 </body>
 </html>

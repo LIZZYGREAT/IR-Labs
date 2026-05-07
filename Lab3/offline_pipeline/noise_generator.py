@@ -7,7 +7,6 @@ class TypoGenerator:
     基于 QWERTY 键盘拓扑结构的物理噪声发生器
     """
     def __init__(self):
-        # 严格定义键盘相邻拓扑关系（基于曼哈顿距离 <= 1.5 的按键）
         self.keyboard_adjacency = {
             'q': ['w', 'a', 's'], 'w': ['q', 'e', 'a', 's', 'd'], 'e': ['w', 'r', 's', 'd', 'f'],
             'r': ['e', 't', 'd', 'f', 'g'], 't': ['r', 'y', 'f', 'g', 'h'], 'y': ['t', 'u', 'g', 'h', 'j'],
@@ -103,7 +102,6 @@ def generate_parallel_corpus(input_filepath: str, output_filepath: str, error_ra
                 
             noisy_query = generator.inject_noise(clean_query, error_rate=error_rate)
             
-            # 即使没有发生变异（噪声命中率为概率事件），也记录下来作为负样本对照
             f_out.write(f"{noisy_query}\t{clean_query}\n")
 
     print(f"平行语料生成完成！已保存至：{output_filepath}")

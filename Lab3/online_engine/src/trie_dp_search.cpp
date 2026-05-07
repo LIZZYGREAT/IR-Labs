@@ -1,8 +1,8 @@
 #include "../include/trie_dp_search.h"
-#include <algorithm>
 #include <cmath>
 
-TrieDPSearcher::TrieDPSearcher(const DoubleArrayTrie& dat_instance) : dat(dat_instance) {
+TrieDPSearcher::TrieDPSearcher(const DoubleArrayTrie& dat_instance) 
+    : dat(dat_instance) {
     init_cost_table(); 
 }
 
@@ -34,6 +34,7 @@ void TrieDPSearcher::init_cost_table() {
             } else {
                 Coord p1 = keyboard[ic1];
                 Coord p2 = keyboard[ic2];
+                if (p1.r == -1 || p2.r == -1) continue;
                 int dist = std::abs(p1.r - p2.r) + std::abs(p1.c - p2.c);
                 double cost = 0.6 + (0.2 * dist);
                 sub_cost_table[ic1][ic2] = std::min(cost, 2.0);
@@ -42,12 +43,15 @@ void TrieDPSearcher::init_cost_table() {
     }
 }
 
-inline double TrieDPSearcher::get_del_cost(char) const { return 1.0; }
-inline double TrieDPSearcher::get_ins_cost(char) const { return 1.0; }
-
-std::vector<Candidate> TrieDPSearcher::search(const std::string& query, double initial_threshold, size_t k) const {
+// 接收外部传入的 params
+std::vector<Candidate> TrieDPSearcher::search(const std::string& query, const SearchParams& params, size_t k) const {
     int query_len = query.length();
-    if (query_len > MAX_QUERY_LEN - 1) return {}; 
+    if (query_len == 0 || query_len > MAX_QUERY_LEN - 1) return {};
+
+    double adaptive_threshold = params.base_threshold;
+    if (query_len > 5) {
+        adaptive_threshold += (query_len - 5) * params.length_compensation;
+    }
 
     double root_row[MAX_QUERY_LEN + 1]; 
     root_row[0] = 0.0;
@@ -56,9 +60,57 @@ std::vector<Candidate> TrieDPSearcher::search(const std::string& query, double i
     }
 
     std::priority_queue<Candidate> pq;
-    double dynamic_threshold = initial_threshold;
+    double current_dynamic_limit = adaptive_threshold;
 
-    dfs(dat.get_root_state(), "", query, root_row, query_len, dynamic_threshold, pq, k);
+    char first_char = query[0];
+    int first_state = dat.get_next_state(dat.get_root_state(), first_char);
+    
+    if (first_state != -1) {
+        double first_row[MAX_QUERY_LEN + 1];
+        first_row[0] = root_row[0] + get_del_cost(first_char);
+        for (int j = 1; j <= query_len; ++j) {
+            double ins = first_row[j - 1] + get_ins_cost(query[j - 1]);
+            double del = root_row[j] + get_del_cost(first_char);
+            double sub = root_row[j - 1] + get_sub_cost(first_char, query[j - 1]);
+            first_row[j] = std::min({ins, del, sub});
+        }
+        std::string prefix(1, first_char);
+        // 透传 params
+        dfs(first_state, prefix, query, first_row, query_len, current_dynamic_limit, pq, k, params);
+    }
+
+    bool need_fallback = false;
+    if (pq.empty()) {
+        need_fallback = true;
+    } else {
+        const Candidate& best = pq.top();
+        double confidence = best.log_p_i - (best.edit_distance * params.dist_weight);
+        
+        if (confidence < params.confidence_fuse || best.edit_distance > (adaptive_threshold * 0.75)) {
+            need_fallback = true;
+        }
+    }
+
+    if (need_fallback) {
+        double fallback_limit = std::min(current_dynamic_limit, params.fallback_limit); 
+
+        for (char c : valid_charset) {
+            if (c == first_char) continue; 
+            int next_state = dat.get_next_state(dat.get_root_state(), c);
+            if (next_state == -1) continue;
+
+            double curr_row[MAX_QUERY_LEN + 1];
+            curr_row[0] = root_row[0] + get_del_cost(c);
+            for (int j = 1; j <= query_len; ++j) {
+                double ins = curr_row[j - 1] + get_ins_cost(query[j - 1]);
+                double del = root_row[j] + get_del_cost(c);
+                double sub = root_row[j - 1] + get_sub_cost(c, query[j - 1]);
+                curr_row[j] = std::min({ins, del, sub});
+            }
+            std::string prefix(1, c);
+            dfs(next_state, prefix, query, curr_row, query_len, fallback_limit, pq, k, params);
+        }
+    }
 
     std::vector<Candidate> results;
     while (!pq.empty()) {
@@ -77,7 +129,8 @@ void TrieDPSearcher::dfs(
     int query_len,
     double& dynamic_threshold, 
     std::priority_queue<Candidate>& pq, 
-    size_t k
+    size_t k,
+    const SearchParams& config
 ) const {
 
     if (pq.size() == k) {
@@ -90,38 +143,30 @@ void TrieDPSearcher::dfs(
 
         double curr_row[MAX_QUERY_LEN + 1];
         curr_row[0] = prev_row[0] + get_del_cost(c);
-        double min_distance_in_row = curr_row[0];
+        double min_dist = curr_row[0];
 
         for (int j = 1; j <= query_len; ++j) {
-            double insert_cost = curr_row[j - 1] + get_ins_cost(query[j - 1]);
-            double delete_cost = prev_row[j] + get_del_cost(c);
-            double replace_cost = prev_row[j - 1] + get_sub_cost(c, query[j - 1]);
-
-            curr_row[j] = std::min({insert_cost, delete_cost, replace_cost});
-            min_distance_in_row = std::min(min_distance_in_row, curr_row[j]);
+            double ins = curr_row[j - 1] + get_ins_cost(query[j - 1]);
+            double del = prev_row[j] + get_del_cost(c);
+            double sub = prev_row[j - 1] + get_sub_cost(c, query[j - 1]);
+            curr_row[j] = std::min({ins, del, sub});
+            min_dist = std::min(min_dist, curr_row[j]);
         }
 
-        // 仅当当前行的最小可能代价未超过动态阈值时，才继续深入
-        if (min_distance_in_row <= dynamic_threshold) {
+        if (min_dist <= dynamic_threshold && (min_dist / static_cast<double>(query_len)) <= config.max_error_ratio) {
             std::string next_prefix = current_prefix + c;
-
+            
             if (dat.is_word_end(next_state)) {
-                double final_distance = curr_row[query_len];
-                
-                if (final_distance <= dynamic_threshold) {
-                    double prior_log_p = dat.get_weight(next_state);
-                    // 记录 state_id
-                    pq.push({next_prefix, final_distance, prior_log_p, next_state});
-                    
+                double dist = curr_row[query_len];
+                if (dist <= dynamic_threshold) {
+                    pq.push({next_prefix, dist, dat.get_weight(next_state), next_state});
                     if (pq.size() > k) {
-                        pq.pop(); 
-                        // 弹出后立刻更新阈值
+                        pq.pop();
                         dynamic_threshold = std::min(dynamic_threshold, pq.top().edit_distance);
                     }
                 }
             }
-
-            dfs(next_state, next_prefix, query, curr_row, query_len, dynamic_threshold, pq, k);
+            dfs(next_state, next_prefix, query, curr_row, query_len, dynamic_threshold, pq, k, config);
         }
     }
 }
