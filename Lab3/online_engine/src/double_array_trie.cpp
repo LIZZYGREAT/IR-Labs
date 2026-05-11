@@ -15,69 +15,44 @@ DoubleArrayTrie::DoubleArrayTrie(const std::string& index_dir) {
         base = base_loader->data();
         check = check_loader->data();
         weights = weights_loader->data();
-
         array_size = base_loader->size();
 
-        // Sanity check: ensure all three arrays have identical length
         if (check_loader->size() != array_size || weights_loader->size() != array_size) {
-            throw std::runtime_error("DAT binary file lengths mismatch, index may be corrupted!");
+            throw std::runtime_error("DAT binary file lengths mismatch!");
         }
         
-        std::cout << "DoubleArrayTrie engine initialized, total states: " << array_size << std::endl;
+        std::cout << "[INFO] DAT Engine initialized with Heuristic Weights. States: " << array_size << std::endl;
     } catch (const std::exception& e) {
         throw std::runtime_error(std::string("DAT loading failed: ") + e.what());
     }
 }
 
-int DoubleArrayTrie::get_root_state() const {
-    return 1; // During offline construction, state 1 is designated as Root
-}
+int DoubleArrayTrie::get_root_state() const { return 1; }
 
 int DoubleArrayTrie::get_next_state(int current_state, char c) const {
-    // 修复符号警告：显式转换为 int
-    if (current_state <= 0 || current_state >= static_cast<int>(array_size)) {
-        return -1;
-    }
+    // 此时需处理 base 值为负数的情况（word_end 标记）
+    int current_base = base[current_state];
+    if (current_base < 0) current_base = -current_base; // 解包实际 base 指针
 
-    int char_code = get_char_code(c);
-    int next_state = base[current_state] + char_code;
+    if (current_state <= 0 || current_state >= static_cast<int>(array_size)) return -1;
 
-    // 修复符号警告：显式转换为 int
-    if (next_state <= 0 || next_state >= static_cast<int>(array_size)) {
-        return -1;
-    }
+    int next_state = current_base + get_char_code(c);
 
-    // 核心转移校验：如果目标状态的父节点确实是当前状态，则转移合法
-    if (check[next_state] == current_state) {
-        return next_state;
-    }
+    if (next_state <= 0 || next_state >= static_cast<int>(array_size)) return -1;
 
-    return -1; // 哈希冲突或该分支根本不存在
+    if (check[next_state] == current_state) return next_state;
+    return -1;
 }
 
 bool DoubleArrayTrie::is_word_end(int state) const {
-    // 修复符号警告：显式转换为 int
     if (state <= 0 || state >= static_cast<int>(array_size)) return false;
-    // 逻辑锚点：离线构建时，非单词结尾的权重初始化为 0.0。
-    // 由于真实的先验概率对数 log P(I) 必然小于 0（负数），据此判断是否为词尾。
-    return weights[state] < 0.0;
+    // 约定：在 Builder 中，如果该状态是一个合法单词的结尾，则将其 base 设为负数
+    return base[state] < 0;
 }
 
-double DoubleArrayTrie::get_weight(int state) const {
-    // 修复符号警告：显式转换为 int
-    if (state <= 0 || state >= static_cast<int>(array_size)) return 0.0;
+double DoubleArrayTrie::get_max_weight(int state) const {
+    if (state <= 0 || state >= static_cast<int>(array_size)) return -30.0; // 极小值惩罚
     return weights[state];
-}
-
-bool DoubleArrayTrie::exact_match(const std::string& word) const {
-    int current_state = get_root_state();
-    for (char c : word) {
-        current_state = get_next_state(current_state, c);
-        if (current_state == -1) {
-            return false;
-        }
-    }
-    return is_word_end(current_state);
 }
 
 int DoubleArrayTrie::get_word_state(const std::string& word) const {

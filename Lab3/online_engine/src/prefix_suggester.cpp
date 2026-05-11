@@ -1,47 +1,104 @@
 #include "../include/prefix_suggester.h"
 #include <sstream>
 #include <algorithm>
+#include <queue>
 
-PrefixSuggester::PrefixSuggester(const DoubleArrayTrie& dat_ref, const BigramLM& lm_ref, const TrieDPSearcher& searcher_ref, int max_steps)
-    : dat(dat_ref), lm(lm_ref), searcher(searcher_ref), max_dfs_steps(max_steps) {
+PrefixSuggester::PrefixSuggester(
+    const DoubleArrayTrie& query_dat_ref, 
+    const DoubleArrayTrie& word_dat_ref,
+    const TrieDPSearcher& searcher_ref, 
+    int max_steps,
+    double penalty
+) : query_dat(query_dat_ref), 
+    word_dat(word_dat_ref), 
+    searcher(searcher_ref), 
+    max_dfs_steps(max_steps),
+    drop_penalty(penalty) {
     
+    // 补全前置纠错时的配置，保持严格以避免过度纠错改变原意
     strict_config.base_threshold = 1.5;
     strict_config.fallback_limit = 1.5;
-    strict_config.max_error_ratio = 0.35; 
+    strict_config.max_error_ratio = 0.30; 
+    strict_config.heuristic_lambda = 3.0;
+    strict_config.local_beam_width = 5; 
+}
+
+std::string PrefixSuggester::clean_prefix(const std::string& raw_input) const {
+    if (raw_input.empty()) return "";
+
+    std::string lower_input = raw_input;
+    std::transform(lower_input.begin(), lower_input.end(), lower_input.begin(), ::tolower);
+
+    std::vector<std::string> tokens;
+    std::istringstream iss(lower_input);
+    std::string token;
+    while (iss >> token) tokens.push_back(token);
+
+    if (tokens.empty()) return "";
+
+    bool ends_with_space = (raw_input.back() == ' ');
+    std::string cleaned_str = "";
+
+    // 遍历除最后一个 token 外的所有“已输入完毕”的单词
+    size_t complete_words_count = ends_with_space ? tokens.size() : tokens.size() - 1;
+    
+    for (size_t i = 0; i < complete_words_count; ++i) {
+        // 如果该单词在基础词典中不存在，强制纠错
+        if (word_dat.get_word_state(tokens[i]) == -1) {
+            auto corrections = searcher.search(tokens[i], strict_config, 1);
+            if (!corrections.empty()) {
+                cleaned_str += corrections[0].word + " ";
+            } else {
+                cleaned_str += tokens[i] + " "; // 纠错失败，保留原样
+            }
+        } else {
+            cleaned_str += tokens[i] + " ";
+        }
+    }
+
+    // 处理活跃前缀（还在输入中，不进行纠错）
+    if (!ends_with_space && tokens.size() > 0) {
+        cleaned_str += tokens.back();
+    }
+
+    return cleaned_str;
 }
 
 void PrefixSuggester::dfs_subtree(
     int current_state, 
-    const std::string& current_word, 
-    const std::string& context_str, 
-    int context_state,
+    std::string& current_prefix_buffer, 
     std::priority_queue<Suggestion>& min_heap, 
     size_t k,
+    int drop_count,
     int& steps_taken
 ) const {
     if (steps_taken++ > max_dfs_steps) return;
 
-    if (dat.is_word_end(current_state)) {
-        double prior_log_p = dat.get_weight(current_state);
-        double transition_log_p = prior_log_p;
-        
-        if (context_state != -1) {
-            transition_log_p = lm.get_transition_log_p(context_state, current_state, prior_log_p);
-        }
-
-        double final_score = prior_log_p + transition_log_p;
-        std::string full_text = context_str.empty() ? current_word : context_str + " " + current_word;
-        
-        min_heap.push({full_text, final_score});
-        if (min_heap.size() > k) {
-            min_heap.pop();
-        }
+    // --- A* 启发式剪枝结合失配惩罚 ---
+    // 理论最高分 = 该子树存放的历史最高权重 - 丢弃字符的惩罚
+    double max_potential_score = query_dat.get_max_weight(current_state) - (drop_penalty * drop_count);
+    
+    if (min_heap.size() == k && max_potential_score < min_heap.top().score) {
+        return; 
     }
 
-    for (char c = 'a'; c <= 'z'; ++c) {
-        int next_state = dat.get_next_state(current_state, c);
+    // 触达整句叶子节点
+    if (query_dat.is_word_end(current_state)) {
+        // 这里的 get_max_weight(leaf) 提取出的就是我们在 query_builder 中写入的内禀流畅度得分 W_base
+        double final_score = query_dat.get_max_weight(current_state) - (drop_penalty * drop_count);
+        min_heap.push({current_prefix_buffer, final_score});
+        if (min_heap.size() > k) min_heap.pop();
+    }
+
+    // 致命细节修复：遍历字符集必须包含空格 ' '，否则无法跨越单词边界
+    const std::string query_charset = "abcdefghijklmnopqrstuvwxyz ";
+    
+    for (char c : query_charset) {
+        int next_state = query_dat.get_next_state(current_state, c);
         if (next_state != -1) {
-            dfs_subtree(next_state, current_word + c, context_str, context_state, min_heap, k, steps_taken);
+            current_prefix_buffer.push_back(c);
+            dfs_subtree(next_state, current_prefix_buffer, min_heap, k, drop_count, steps_taken);
+            current_prefix_buffer.pop_back(); 
         }
     }
 }
@@ -49,116 +106,35 @@ void PrefixSuggester::dfs_subtree(
 std::vector<Suggestion> PrefixSuggester::suggest(const std::string& raw_input, size_t k) const {
     if (raw_input.empty()) return {};
 
-    std::vector<std::string> tokens;
-    std::istringstream iss(raw_input);
-    std::string token;
-    while (iss >> token) {
-        tokens.push_back(token);
+    // 1. 纠错清洗前缀 (Prefix Cleaning)
+    std::string safe_prefix = clean_prefix(raw_input);
+    if (safe_prefix.empty()) return {};
+
+    // 2. 最长公共前缀下探 (LCP Traversal)
+    int current_state = query_dat.get_root_state();
+    int matched_len = 0;
+
+    for (char c : safe_prefix) {
+        int next_state = query_dat.get_next_state(current_state, c);
+        if (next_state == -1) {
+            break; // 触发物理断崖
+        }
+        current_state = next_state;
+        matched_len++;
     }
 
-    if (tokens.empty()) return {};
+    // 3. 计算断崖回退惩罚 (LCP Fallback Calculation)
+    int drop_count = safe_prefix.length() - matched_len;
+    std::string matched_str = safe_prefix.substr(0, matched_len);
 
-    bool ends_with_space = (raw_input.back() == ' ');
+    // 4. DFS 召回
     std::priority_queue<Suggestion> min_heap;
+    int steps_taken = 0;
+    std::string buffer = matched_str; 
+    
+    dfs_subtree(current_state, buffer, min_heap, k, drop_count, steps_taken);
 
-    if (ends_with_space) {
-        std::string last_completed_word = tokens.back();
-        int context_state = dat.get_word_state(last_completed_word);
-
-        std::string base_str = "";
-        if (tokens.size() > 1) {
-            base_str = raw_input.substr(0, raw_input.length() - last_completed_word.length() - 1);
-        }
-        std::string context_str = base_str.empty() ? last_completed_word : base_str + last_completed_word;
-
-        if (context_state == -1) {
-            auto context_corrections = searcher.search(last_completed_word, strict_config, 1);
-            if (!context_corrections.empty()) {
-                last_completed_word = context_corrections[0].word;
-                context_state = context_corrections[0].state_id;
-                context_str = base_str.empty() ? last_completed_word : base_str + last_completed_word;
-            }
-        }
-
-        if (context_state != -1) {
-            const auto* edges = lm.get_forward_transitions(context_state);
-            if (edges) {
-                size_t limit = std::min(k, edges->size());
-                for (size_t i = 0; i < limit; ++i) {
-                    int next_state = (*edges)[i].first;
-                    double log_p = (*edges)[i].second;
-                    
-                    std::string next_word = lm.get_word_by_state(next_state);
-                    if (!next_word.empty()) {
-                        std::string full_text = context_str + " " + next_word;
-                        min_heap.push({full_text, log_p});
-                    }
-                }
-            }
-        }
-    } 
-    else {
-        std::string prefix = tokens.back();
-        std::string context_str = "";
-        int context_state = -1;
-
-        if (tokens.size() > 1) {
-            std::string last_completed_word = tokens[tokens.size() - 2];
-            context_state = dat.get_word_state(last_completed_word);
-            
-            size_t prefix_pos = raw_input.find_last_of(' ');
-            std::string base_str = raw_input.substr(0, prefix_pos);
-
-            if (context_state == -1) {
-                auto context_corrections = searcher.search(last_completed_word, strict_config, 1);
-                if (!context_corrections.empty()) {
-                    last_completed_word = context_corrections[0].word;
-                    context_state = context_corrections[0].state_id;
-                    
-                    size_t prev_space = base_str.find_last_of(' ');
-                    if (prev_space != std::string::npos) {
-                        context_str = base_str.substr(0, prev_space + 1) + last_completed_word;
-                    } else {
-                        context_str = last_completed_word;
-                    }
-                } else {
-                    context_str = base_str; 
-                }
-            } else {
-                context_str = base_str;
-            }
-        }
-
-        int current_state = dat.get_root_state();
-        for (char c : prefix) {
-            current_state = dat.get_next_state(current_state, c);
-            if (current_state == -1) break; 
-        }
-
-        if (current_state != -1) {
-            int steps_taken = 0;
-            dfs_subtree(current_state, prefix, context_str, context_state, min_heap, k, steps_taken);
-        }
-        else {
-            // 【核心修正】显式传入 strict_config
-            auto prefix_corrections = searcher.search(prefix, strict_config, k);
-            for (const auto& cand : prefix_corrections) {
-                double prior_log_p = cand.log_p_i;
-                double transition_log_p = prior_log_p; 
-                
-                if (context_state != -1) {
-                    transition_log_p = lm.get_transition_log_p(context_state, cand.state_id, prior_log_p);
-                }
-
-                double final_score = prior_log_p + transition_log_p - cand.edit_distance;
-                std::string full_text = context_str.empty() ? cand.word : context_str + " " + cand.word;
-                
-                min_heap.push({full_text, final_score});
-                if (min_heap.size() > k) min_heap.pop();
-            }
-        }
-    }
-
+    // 5. 排序输出
     std::vector<Suggestion> results;
     while (!min_heap.empty()) {
         results.push_back(min_heap.top());

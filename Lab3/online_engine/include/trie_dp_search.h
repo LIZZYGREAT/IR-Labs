@@ -15,9 +15,10 @@ struct Candidate {
     double edit_distance;
     double log_p_i;
     int state_id;
+    double penalty_score; 
 
     bool operator<(const Candidate& other) const {
-        return (edit_distance - log_p_i * 0.15) > (other.edit_distance - other.log_p_i * 0.15);
+        return penalty_score > other.penalty_score; 
     }
 };
 
@@ -34,6 +35,8 @@ private:
         const std::string& current_prefix, 
         const std::string& query, 
         const double* prev_row, 
+        const double* prev_prev_row, 
+        char prev_c,
         int query_len,
         double& dynamic_threshold, 
         std::priority_queue<Candidate>& pq, 
@@ -48,9 +51,11 @@ private:
     inline double get_del_cost(char c) const { return 1.0; }
     inline double get_ins_cost(char c) const { return 1.0; }
 
+    inline double get_dynamic_edit_cost(int depth, bool is_sub) const;
+
+
 public:
     TrieDPSearcher(const DoubleArrayTrie& dat_instance);
-
     std::vector<Candidate> search(const std::string& query, const SearchParams& params, size_t k) const;
 };
 

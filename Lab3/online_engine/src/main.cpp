@@ -24,19 +24,25 @@ std::vector<std::string> tokenize(const std::string& text) {
 }
 
 int main() {
-    std::string index_dir = "../data/index";
+    // 架构升级：明确区分单词字典与整句索引
+    std::string word_index_dir = "../data/index/words";
+    std::string query_index_dir = "../data/index/queries";
     std::string bigram_path = "../data/processed/bigram_lm.tsv";
 
     try {
-        std::cout << "[INFO] Initializing NLP Engine with Beam Search & Auto-Complete..." << std::endl;
+        std::cout << "[INFO] Initializing Dual-DAT NLP Engine..." << std::endl;
         
-        DoubleArrayTrie dat(index_dir);
-        TrieDPSearcher searcher(dat);
-        BigramLM lm(bigram_path, dat, -5.0); 
-        
+        // 1. 初始化纠错子系统 (基于 words)
+        DoubleArrayTrie word_dat(word_index_dir);
+        TrieDPSearcher searcher(word_dat);
+        BigramLM lm(bigram_path, word_dat, -5.0); 
         ViterbiDecoder decoder(lm, 2.5, 5, 10.0);
         
-        PrefixSuggester suggester(dat, lm, searcher, 2000);
+        // 2. 初始化召回子系统 (基于 queries)
+        DoubleArrayTrie query_dat(query_index_dir);
+        
+        // 参数：加载 query_dat 与 word_dat，最大 DFS 搜索节点 5000，断崖惩罚系数 2.0
+        PrefixSuggester suggester(query_dat, word_dat, searcher, 5000, 2.0);
 
         httplib::Server svr;
 
@@ -45,6 +51,7 @@ int main() {
             res.set_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         });
 
+        // 自动补全端点：此时已完全消除生成幻觉，提供 100% 语料库一致性匹配
         svr.Get("/suggest", [&](const httplib::Request& req, httplib::Response& res) {
             res.set_header("Access-Control-Allow-Origin", "*");
             
@@ -78,6 +85,7 @@ int main() {
             res.set_content(json_response, "application/json");
         });
 
+        // 整句纠错端点：逻辑保持不变
         svr.Get("/search", [&](const httplib::Request& req, httplib::Response& res) {
             res.set_header("Access-Control-Allow-Origin", "*");
             

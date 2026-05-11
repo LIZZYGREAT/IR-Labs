@@ -1,5 +1,22 @@
 #include "../include/trie_dp_search.h"
+#include <algorithm>
 #include <cmath>
+#include <vector>
+
+/**
+ * @brief 启发式搜索候选结构
+ */
+struct LayerCandidate {
+    char c;
+    int state;
+    double row[MAX_QUERY_LEN + 1];
+    double heuristic_score;
+
+    // 降序排列：启发式得分越高越靠前
+    bool operator>(const LayerCandidate& other) const {
+        return heuristic_score > other.heuristic_score;
+    }
+};
 
 TrieDPSearcher::TrieDPSearcher(const DoubleArrayTrie& dat_instance) 
     : dat(dat_instance) {
@@ -7,6 +24,7 @@ TrieDPSearcher::TrieDPSearcher(const DoubleArrayTrie& dat_instance)
 }
 
 void TrieDPSearcher::init_cost_table() {
+    // 默认高惩罚初始化
     for (int i = 0; i < 128; ++i) {
         for (int j = 0; j < 128; ++j) {
             sub_cost_table[i][j] = 2.0; 
@@ -14,102 +32,70 @@ void TrieDPSearcher::init_cost_table() {
     }
 
     struct Coord { int r; int c; };
-    Coord keyboard[128];
-    for (int i = 0; i < 128; ++i) keyboard[i] = {-1, -1};
+    Coord kb[128];
+    for (int i = 0; i < 128; ++i) kb[i] = {-1, -1};
 
-    keyboard[static_cast<int>('q')] = {0, 0}; keyboard[static_cast<int>('w')] = {0, 1}; keyboard[static_cast<int>('e')] = {0, 2}; keyboard[static_cast<int>('r')] = {0, 3}; keyboard[static_cast<int>('t')] = {0, 4};
-    keyboard[static_cast<int>('y')] = {0, 5}; keyboard[static_cast<int>('u')] = {0, 6}; keyboard[static_cast<int>('i')] = {0, 7}; keyboard[static_cast<int>('o')] = {0, 8}; keyboard[static_cast<int>('p')] = {0, 9};
-    keyboard[static_cast<int>('a')] = {1, 0}; keyboard[static_cast<int>('s')] = {1, 1}; keyboard[static_cast<int>('d')] = {1, 2}; keyboard[static_cast<int>('f')] = {1, 3}; keyboard[static_cast<int>('g')] = {1, 4};
-    keyboard[static_cast<int>('h')] = {1, 5}; keyboard[static_cast<int>('j')] = {1, 6}; keyboard[static_cast<int>('k')] = {1, 7}; keyboard[static_cast<int>('l')] = {1, 8};
-    keyboard[static_cast<int>('z')] = {2, 1}; keyboard[static_cast<int>('x')] = {2, 2}; keyboard[static_cast<int>('c')] = {2, 3}; keyboard[static_cast<int>('v')] = {2, 4}; keyboard[static_cast<int>('b')] = {2, 5};
-    keyboard[static_cast<int>('n')] = {2, 6}; keyboard[static_cast<int>('m')] = {2, 7};
+    // 键盘物理布局映射
+    kb['q']={0,0}; kb['w']={0,1}; kb['e']={0,2}; kb['r']={0,3}; kb['t']={0,4}; kb['y']={0,5}; kb['u']={0,6}; kb['i']={0,7}; kb['o']={0,8}; kb['p']={0,9};
+    kb['a']={1,0}; kb['s']={1,1}; kb['d']={1,2}; kb['f']={1,3}; kb['g']={1,4}; kb['h']={1,5}; kb['j']={1,6}; kb['k']={1,7}; kb['l']={1,8};
+    kb['z']={2,1}; kb['x']={2,2}; kb['c']={2,3}; kb['v']={2,4}; kb['b']={2,5}; kb['n']={2,6}; kb['m']={2,7};
 
     for (char c1 = 'a'; c1 <= 'z'; ++c1) {
         for (char c2 = 'a'; c2 <= 'z'; ++c2) {
-            int ic1 = static_cast<int>(c1);
-            int ic2 = static_cast<int>(c2);
-            
             if (c1 == c2) {
-                sub_cost_table[ic1][ic2] = 0.0; 
+                sub_cost_table[(int)c1][(int)c2] = 0.0;
             } else {
-                Coord p1 = keyboard[ic1];
-                Coord p2 = keyboard[ic2];
+                Coord p1 = kb[(int)c1], p2 = kb[(int)c2];
                 if (p1.r == -1 || p2.r == -1) continue;
                 int dist = std::abs(p1.r - p2.r) + std::abs(p1.c - p2.c);
-                double cost = 0.6 + (0.2 * dist);
-                sub_cost_table[ic1][ic2] = std::min(cost, 2.0);
+                sub_cost_table[(int)c1][(int)c2] = std::min(0.6 + (0.2 * dist), 2.0);
             }
         }
     }
 }
 
-// 接收外部传入的 params
-std::vector<Candidate> TrieDPSearcher::search(const std::string& query, const SearchParams& params, size_t k) const {
-    int query_len = query.length();
-    if (query_len == 0 || query_len > MAX_QUERY_LEN - 1) return {};
+/**
+ * @brief 深度感知代价控制
+ * 针对短前缀 (L<=3) 显著拉高增删代价，模拟“高信息密度，低容错”的物理规律
+ */
+inline double TrieDPSearcher::get_dynamic_edit_cost(int depth, bool is_sub) const {
+    if (is_sub) return 1.0; 
+    return (depth <= 3) ? 2.5 : 1.0; 
+}
 
-    double adaptive_threshold = params.base_threshold;
-    if (query_len > 5) {
-        adaptive_threshold += (query_len - 5) * params.length_compensation;
-    }
+std::vector<Candidate> TrieDPSearcher::search(const std::string& query, const SearchParams& params, size_t k) const {
+    std::string lower_query = query;
+    std::transform(lower_query.begin(), lower_query.end(), lower_query.begin(), ::tolower);
+    
+    int query_len = lower_query.length(); 
+    if (query_len == 0 || query_len > MAX_QUERY_LEN - 1) return {};
 
     double root_row[MAX_QUERY_LEN + 1]; 
     root_row[0] = 0.0;
     for (int j = 1; j <= query_len; ++j) {
-        root_row[j] = root_row[j - 1] + get_ins_cost(query[j - 1]);
+        root_row[j] = root_row[j - 1] + 1.0;
     }
 
     std::priority_queue<Candidate> pq;
-    double current_dynamic_limit = adaptive_threshold;
+    double current_dynamic_limit = params.base_threshold;
 
-    char first_char = query[0];
-    int first_state = dat.get_next_state(dat.get_root_state(), first_char);
-    
-    if (first_state != -1) {
-        double first_row[MAX_QUERY_LEN + 1];
-        first_row[0] = root_row[0] + get_del_cost(first_char);
+    // 展开第一层节点
+    for (char c : valid_charset) {
+        int next_state = dat.get_next_state(dat.get_root_state(), c);
+        if (next_state == -1) continue;
+
+        double curr_row[MAX_QUERY_LEN + 1];
+        double edit_cost = get_dynamic_edit_cost(1, false);
+        curr_row[0] = root_row[0] + edit_cost;
+
         for (int j = 1; j <= query_len; ++j) {
-            double ins = first_row[j - 1] + get_ins_cost(query[j - 1]);
-            double del = root_row[j] + get_del_cost(first_char);
-            double sub = root_row[j - 1] + get_sub_cost(first_char, query[j - 1]);
-            first_row[j] = std::min({ins, del, sub});
+            double ins = curr_row[j - 1] + 1.0;
+            double del = root_row[j] + edit_cost;
+            double sub = root_row[j - 1] + get_sub_cost(c, query[j - 1]);
+            curr_row[j] = std::min({ins, del, sub});
         }
-        std::string prefix(1, first_char);
-        // 透传 params
-        dfs(first_state, prefix, query, first_row, query_len, current_dynamic_limit, pq, k, params);
-    }
-
-    bool need_fallback = false;
-    if (pq.empty()) {
-        need_fallback = true;
-    } else {
-        const Candidate& best = pq.top();
-        double confidence = best.log_p_i - (best.edit_distance * params.dist_weight);
-        
-        if (confidence < params.confidence_fuse || best.edit_distance > (adaptive_threshold * 0.75)) {
-            need_fallback = true;
-        }
-    }
-
-    if (need_fallback) {
-        double fallback_limit = std::min(current_dynamic_limit, params.fallback_limit); 
-
-        for (char c : valid_charset) {
-            if (c == first_char) continue; 
-            int next_state = dat.get_next_state(dat.get_root_state(), c);
-            if (next_state == -1) continue;
-
-            double curr_row[MAX_QUERY_LEN + 1];
-            curr_row[0] = root_row[0] + get_del_cost(c);
-            for (int j = 1; j <= query_len; ++j) {
-                double ins = curr_row[j - 1] + get_ins_cost(query[j - 1]);
-                double del = root_row[j] + get_del_cost(c);
-                double sub = root_row[j - 1] + get_sub_cost(c, query[j - 1]);
-                curr_row[j] = std::min({ins, del, sub});
-            }
-            std::string prefix(1, c);
-            dfs(next_state, prefix, query, curr_row, query_len, fallback_limit, pq, k, params);
-        }
+        std::string prefix(1, c);
+        dfs(next_state, prefix, query, curr_row, root_row, '\0', query_len, current_dynamic_limit, pq, k, params);
     }
 
     std::vector<Candidate> results;
@@ -126,47 +112,99 @@ void TrieDPSearcher::dfs(
     const std::string& current_prefix, 
     const std::string& query, 
     const double* prev_row, 
+    const double* prev_prev_row,
+    char prev_c,                 
     int query_len,
     double& dynamic_threshold, 
     std::priority_queue<Candidate>& pq, 
     size_t k,
     const SearchParams& config
 ) const {
+    int current_depth = current_prefix.length();
+    
+    // ==========================================
+    // 1. A* 启发式全局剪枝
+    // ==========================================
+    double max_weight = dat.get_max_weight(current_state);
+    double min_dist_in_prev = prev_row[0];
+    for (int j = 1; j <= query_len; ++j) {
+        min_dist_in_prev = std::min(min_dist_in_prev, prev_row[j]);
+    }
 
     if (pq.size() == k) {
-        dynamic_threshold = std::min(dynamic_threshold, pq.top().edit_distance);
+        // 当前分支能达到的最高理论分值：子树最大词频 - 最小编辑代价惩罚
+        double max_potential_score = max_weight - (min_dist_in_prev * config.heuristic_lambda);
+        // 如果潜力上限已经低于当前 Top-K 的最差分值，直接砍掉整个子树
+        double k_worst_score = pq.top().log_p_i - (pq.top().edit_distance * config.heuristic_lambda);
+        if (max_potential_score < k_worst_score) return;
     }
+
+    // ==========================================
+    // 2. 局部束搜索 (Local Beam Search)
+    // ==========================================
+    std::vector<LayerCandidate> layer_candidates;
 
     for (char c : valid_charset) {
         int next_state = dat.get_next_state(current_state, c);
         if (next_state == -1) continue;
 
-        double curr_row[MAX_QUERY_LEN + 1];
-        curr_row[0] = prev_row[0] + get_del_cost(c);
-        double min_dist = curr_row[0];
+        LayerCandidate lc;
+        lc.c = c;
+        lc.state = next_state;
+        double edit_cost = get_dynamic_edit_cost(current_depth + 1, false);
+        
+        lc.row[0] = prev_row[0] + edit_cost;
+        double min_dist_in_lc = lc.row[0];
 
         for (int j = 1; j <= query_len; ++j) {
-            double ins = curr_row[j - 1] + get_ins_cost(query[j - 1]);
-            double del = prev_row[j] + get_del_cost(c);
+            double ins = lc.row[j - 1] + 1.0;
+            double del = prev_row[j] + edit_cost;
             double sub = prev_row[j - 1] + get_sub_cost(c, query[j - 1]);
-            curr_row[j] = std::min({ins, del, sub});
-            min_dist = std::min(min_dist, curr_row[j]);
+            lc.row[j] = std::min({ins, del, sub});
+
+            // 物理连击通道 (Repeat Channel): 适配噪声发生器的 repeat 模式
+            if (c == query[j - 1] && j >= 2 && query[j - 1] == query[j - 2]) {
+                lc.row[j] = std::min(lc.row[j], prev_row[j - 1] + 0.1); 
+            }
+            min_dist_in_lc = std::min(min_dist_in_lc, lc.row[j]);
         }
 
-        if (min_dist <= dynamic_threshold && (min_dist / static_cast<double>(query_len)) <= config.max_error_ratio) {
-            std::string next_prefix = current_prefix + c;
-            
-            if (dat.is_word_end(next_state)) {
-                double dist = curr_row[query_len];
-                if (dist <= dynamic_threshold) {
-                    pq.push({next_prefix, dist, dat.get_weight(next_state), next_state});
-                    if (pq.size() > k) {
-                        pq.pop();
-                        dynamic_threshold = std::min(dynamic_threshold, pq.top().edit_distance);
-                    }
+        // 仅保留低于阈值的物理状态
+        if (min_dist_in_lc <= dynamic_threshold) {
+            lc.heuristic_score = dat.get_max_weight(next_state) - (min_dist_in_lc * config.heuristic_lambda);
+            layer_candidates.push_back(lc);
+        }
+    }
+
+    // 对同一深度的子节点按“潜力”排序
+    std::sort(layer_candidates.begin(), layer_candidates.end(), std::greater<LayerCandidate>());
+    
+    // 受限于 local_beam_width 的宽度截断
+    size_t limit = std::min(layer_candidates.size(), (size_t)config.local_beam_width);
+
+    for (size_t i = 0; i < limit; ++i) {
+        const auto& lc = layer_candidates[i];
+        std::string next_prefix = current_prefix + lc.c;
+        
+        // 词尾判定：使用 Sign-Bit 逻辑检测
+        if (dat.is_word_end(lc.state)) {
+            double final_dist = lc.row[query_len];
+            if (final_dist <= dynamic_threshold) {
+                double prior_log_p = dat.get_max_weight(lc.state); // 子树最大此时即词频
+                // 计算用于 Top-K 队列的排序惩罚值
+                double final_penalty = final_dist - (prior_log_p * 0.1); 
+                
+                pq.push({next_prefix, final_dist, prior_log_p, lc.state, final_penalty});
+                
+                if (pq.size() > k) {
+                    pq.pop();
+                    // 动态更新物理阈值以加速剪枝
+                    dynamic_threshold = std::min(dynamic_threshold, pq.top().edit_distance);
                 }
             }
-            dfs(next_state, next_prefix, query, curr_row, query_len, dynamic_threshold, pq, k, config);
         }
+        
+        // 向下递归
+        dfs(lc.state, next_prefix, query, lc.row, prev_row, lc.c, query_len, dynamic_threshold, pq, k, config);
     }
 }

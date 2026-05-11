@@ -1,6 +1,7 @@
 #include "../include/viterbi_decoder.h"
 #include <algorithm>
 #include <limits>
+#include <unordered_map>
 
 struct BeamHypothesis {
     std::string text;
@@ -37,7 +38,6 @@ std::vector<DecodedSentence> ViterbiDecoder::decode(const std::vector<std::vecto
     // 1. 初始化 t=0 
     const auto& first_cands = token_candidates[0];
     for (const auto& cand : first_cands) {
-        // 调用动态奖励计算
         double bonus = calculate_dynamic_bonus(cand);
         double emission_log_p = -lambda * cand.edit_distance + bonus;
         
@@ -51,12 +51,13 @@ std::vector<DecodedSentence> ViterbiDecoder::decode(const std::vector<std::vecto
     // 2. 推进时刻 t=1 到 t=N-1
     for (int t = 1; t < num_tokens; ++t) {
         const auto& curr_cands = token_candidates[t];
-        std::vector<BeamHypothesis> next_beam;
+        
+        // 修复：同构路径合并 (Path Merging) 防止同质化劣解占据 Beam 空间
+        std::unordered_map<int, BeamHypothesis> merged_beam;
 
         for (const auto& hyp : current_beam) {
             for (const auto& cand : curr_cands) {
                 
-                // 调用动态奖励计算
                 double bonus = calculate_dynamic_bonus(cand);
                 double emission_log_p = -lambda * cand.edit_distance + bonus;
 
@@ -69,8 +70,18 @@ std::vector<DecodedSentence> ViterbiDecoder::decode(const std::vector<std::vecto
                 double new_score = hyp.score + transition_log_p + emission_log_p;
                 std::string new_text = hyp.text + " " + cand.word;
 
-                next_beam.push_back({new_text, new_score, cand.state_id});
+                // 检查并仅保留到达该候选状态的最优路径
+                auto it = merged_beam.find(cand.state_id);
+                if (it == merged_beam.end() || new_score > it->second.score) {
+                    merged_beam[cand.state_id] = {new_text, new_score, cand.state_id};
+                }
             }
+        }
+
+        std::vector<BeamHypothesis> next_beam;
+        next_beam.reserve(merged_beam.size());
+        for (const auto& pair : merged_beam) {
+            next_beam.push_back(pair.second);
         }
 
         std::sort(next_beam.begin(), next_beam.end());
