@@ -17,8 +17,11 @@ struct Candidate {
     int state_id;
     double penalty_score; 
 
+    // 修复：重载为适配 std::priority_queue 的堆排序比较逻辑。
+    // 使得 penalty_score 较大（即综合质量较劣）的元素置于 top()，
+    // 确保当优先队列超出设定容量 k 时，优先执行 pop() 淘汰最劣解。
     bool operator<(const Candidate& other) const {
-        return penalty_score > other.penalty_score; 
+        return penalty_score < other.penalty_score; 
     }
 };
 
@@ -53,6 +56,11 @@ private:
 
     inline double get_dynamic_edit_cost(int depth, bool is_sub) const;
 
+    // --- 新增：辅助校验与打分机制声明 (辅助前置斩杀与多维信道建模) ---
+    bool passes_feasibility_gating(const std::string& cand_word, const std::string& query, const SearchParams& config) const;
+    double calculate_lcs_ratio(const std::string& s1, const std::string& s2) const;
+    double calculate_char_overlap_ratio(const std::string& cand_word, const std::string& query) const;
+    double calculate_composite_penalty(const std::string& cand_word, const std::string& query, double weighted_edit_dist, double prior_log_p, const SearchParams& config) const;
 
 public:
     TrieDPSearcher(const DoubleArrayTrie& dat_instance);

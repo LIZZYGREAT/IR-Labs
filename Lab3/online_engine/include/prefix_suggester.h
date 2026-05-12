@@ -25,7 +25,8 @@ private:
     int max_dfs_steps;
     double drop_penalty;               // LCP-Fallback 时，每丢弃一个失配字符的惩罚分数
     
-    SearchParams strict_config;
+    SearchParams strict_config;        // 针对轻微拼写错或常规校验的严格配置
+    SearchParams force_config;         // 针对词典中绝对不存在错词的强制替换配置
 
     /**
      * @brief 带有失配惩罚的 A* 启发式整句搜索
