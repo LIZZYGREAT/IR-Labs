@@ -4,95 +4,259 @@
     <meta charset="UTF-8">
     <title>预检索意图增强系统</title>
     <style>
+        :root {
+            --primary-color: #1a73e8;
+            --title-color: #1a0dab;
+            --text-main: #202124;
+            --text-muted: #5f6368;
+            --bg-body: #f8f9fa;
+            --bg-card: #ffffff;
+            --border-color: #dfe1e5;
+            --shadow-base: 0 1px 6px rgba(32, 33, 36, 0.15);
+            --shadow-hover: 0 2px 12px rgba(32, 33, 36, 0.22);
+            --shadow-dropdown: 0 8px 24px rgba(32, 33, 36, 0.18);
+        }
+
         body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
-            background-color: #f8f9fa; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; 
+            background-color: var(--bg-body); 
             display: flex; 
             flex-direction: column; 
             align-items: center; 
-            margin-top: 80px; 
+            margin: 0;
+            padding-top: 10vh;
+            color: var(--text-main);
         }
         
-        .header { margin-bottom: 30px; text-align: center; }
-        .header h2 { color: #202124; margin-bottom: 8px; }
-        .header p { color: #5f6368; font-size: 14px; margin: 0; }
+        /* 顶部品牌头部区 */
+        .header { 
+            margin-bottom: 36px; 
+            text-align: center; 
+            user-select: none;
+        }
+        .header h2 { 
+            font-size: 32px;
+            font-weight: 600;
+            letter-spacing: -0.5px;
+            color: var(--text-main); 
+            margin: 0 0 12px 0; 
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+        .header h2 .icon { font-size: 28px; }
+        .header .subtitle-badges { 
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            align-items: center;
+        }
+        .header .badge {
+            background-color: #e8f0fe;
+            color: var(--primary-color);
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 13px;
+            font-weight: 500;
+        }
 
-        .search-container { position: relative; width: 640px; }
+        /* 核心输入框容器 */
+        .search-container { 
+            position: relative; 
+            width: 100%;
+            max-width: 680px; 
+            padding: 0 16px;
+            box-sizing: border-box;
+        }
         
+        .input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+            background: var(--bg-card);
+            border: 1px solid var(--border-color); 
+            border-radius: 28px; 
+            box-shadow: var(--shadow-base); 
+            transition: all 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .input-wrapper:focus-within { 
+            box-shadow: var(--shadow-hover); 
+            border-color: rgba(26, 115, 232, 0.4);
+        }
+
+        .search-icon {
+            margin-left: 20px;
+            color: #9aa0a6;
+            font-size: 18px;
+            pointer-events: none;
+        }
+
         input { 
             width: 100%; 
-            padding: 16px 24px; 
-            font-size: 18px; 
-            border: 1px solid #dfe1e5; 
-            border-radius: 24px; 
+            padding: 16px 20px 16px 14px; 
+            font-size: 17px; 
+            border: none; 
+            background: transparent;
             outline: none; 
-            box-shadow: 0 1px 6px rgba(32,33,36,.28); 
-            box-sizing: border-box; 
-            transition: box-shadow 0.2s;
+            color: var(--text-main);
         }
-        input:focus { box-shadow: 0 1px 10px rgba(32,33,36,.4); }
+        input::placeholder { color: #9aa0a6; }
 
-        /* 下拉联想框样式 */
+        /* 下拉自动补全联想框 */
         .dropdown { 
             position: absolute; 
-            top: 100%; 
-            left: 0; 
-            right: 0; 
-            background: white; 
-            border-radius: 12px; 
-            box-shadow: 0 4px 6px rgba(32,33,36,.28); 
-            margin-top: 8px; 
+            top: calc(100% + 8px); 
+            left: 16px; 
+            right: 16px; 
+            background: var(--bg-card); 
+            border-radius: 16px; 
+            border: 1px solid var(--border-color);
+            box-shadow: var(--shadow-dropdown); 
             overflow: hidden; 
             display: none; 
             z-index: 1000; 
+            animation: fadeIn 0.2s ease-out;
         }
         .suggest-item { 
-            padding: 12px 24px; 
+            padding: 13px 22px; 
             display: flex; 
             justify-content: space-between; 
             align-items: center; 
             cursor: pointer; 
+            transition: background-color 0.15s ease;
         }
-        .suggest-item:hover { background-color: #f1f3f4; }
-        .suggest-item .word { font-size: 16px; font-weight: 500; color: #202124; }
-        .suggest-item .meta-badge { background: #f1f3f4; color: #5f6368; padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+        .suggest-item:hover { background-color: rgba(26, 115, 232, 0.05); }
+        .suggest-item:active { background-color: rgba(26, 115, 232, 0.1); }
+        .suggest-item .word { font-size: 16px; font-weight: 500; color: var(--text-main); }
+        .suggest-item .meta-badge { 
+            background: #f1f3f4; 
+            color: var(--text-muted); 
+            padding: 2px 8px; 
+            border-radius: 6px; 
+            font-size: 12px; 
+            font-family: monospace;
+        }
 
         /* 核心检索结果展示区 */
         .results-container {
-            width: 640px;
-            margin-top: 30px;
+            width: 100%;
+            max-width: 680px;
+            padding: 0 16px;
+            box-sizing: border-box;
+            margin-top: 32px;
             display: none;
+            animation: fadeIn 0.3s ease-out;
         }
-        .results-header { font-size: 14px; color: #70757a; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #ebebeb; }
-        .result-card {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            border: 1px solid #dfe1e5;
-            margin-bottom: 12px;
-            transition: box-shadow 0.2s;
+        .results-header { 
+            font-size: 14px; 
+            color: var(--text-muted); 
+            margin-bottom: 16px; 
+            padding: 0 8px 12px 8px; 
+            border-bottom: 1px solid #ebebeb; 
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
         }
-        .result-card:hover { box-shadow: 0 1px 4px rgba(32,33,36,.1); }
-        .result-card .intent { font-size: 20px; color: #1a0dab; text-decoration: none; font-weight: 500; display: block; margin-bottom: 8px;}
-        .result-card .intent:hover { text-decoration: underline; cursor: pointer; }
-        .result-card .metrics { font-size: 13px; color: #006621; display: flex; gap: 16px; }
+        .results-header .meta-time { font-size: 13px; color: #70757a; }
         
-        .loading { text-align: center; color: #70757a; font-size: 14px; display: none; margin-top: 20px; }
+        .result-card {
+            background: var(--bg-card);
+            padding: 22px 24px;
+            border-radius: 14px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 16px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+            transition: all 0.2s ease;
+        }
+        .result-card:hover { 
+            box-shadow: var(--shadow-base); 
+            transform: translateY(-1px);
+        }
+        
+        .result-card .intent { 
+            font-size: 20px; 
+            color: var(--title-color); 
+            text-decoration: none; 
+            font-weight: 500; 
+            display: inline-block; 
+            margin-bottom: 14px;
+            line-height: 1.3;
+            cursor: pointer;
+            position: relative;
+        }
+        .result-card .intent::after {
+            content: '';
+            position: absolute;
+            left: 0;
+            bottom: -2px;
+            width: 0;
+            height: 1.5px;
+            background-color: var(--title-color);
+            transition: width 0.2s ease;
+        }
+        .result-card .intent:hover::after { width: 100%; }
+
+        /* 标签化参数陈列区 */
+        .result-card .metrics { 
+            display: flex; 
+            flex-wrap: wrap;
+            gap: 10px; 
+        }
+        .metric-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12.5px;
+            font-weight: 500;
+            background: #f1f3f4;
+            color: var(--text-muted);
+        }
+        .metric-pill.dist { background: #e6f4ea; color: #137333; }
+        .metric-pill.score { background: #fef7e0; color: #b06000; }
+        .metric-pill.latency { background: #f1f3f4; color: #5f6368; font-family: monospace; }
+        
+        /* 平滑加载指示器 */
+        .loading { 
+            text-align: center; 
+            color: var(--primary-color); 
+            font-size: 14px; 
+            font-weight: 500;
+            display: none; 
+            margin-top: 40px; 
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(6px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.4; }
+            50% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
 
     <div class="header">
-        <h2>🔍 预检索意图增强系统</h2>
-        <p>1.输入字符触发 Auto-Complete&nbsp;&nbsp;|&nbsp;&nbsp;2.回车触发 Viterbi Spell Correction</p>
+        <h2><span class="icon">🔍</span> 预检索意图增强系统</h2>
+        <div class="subtitle-badges">
+            <span class="badge">输入触发 意图识别</span>
+            <span class="badge">回车返回 搜索结果</span>
+        </div>
     </div>
 
     <div class="search-container">
-        <input type="text" id="searchInput" placeholder="尝试输入带有拼写错误的 Query，如: what do..." autocomplete="off">
+        <div class="input-wrapper">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="searchInput" placeholder="尝试输入带有拼写错误的 Query，如: waht do..." autocomplete="off">
+        </div>
         <div class="dropdown" id="dropdown"></div>
     </div>
 
-    <div class="loading" id="loading">正在进行全局 DP 容错检索...</div>
+    <div class="loading" id="loading">正在进行全局 Trie DP 深度对齐检索...</div>
 
     <div class="results-container" id="resultsContainer">
         <div class="results-header" id="resultsMeta"></div>
@@ -141,7 +305,7 @@
 
         function renderDropdown(results) {
             dropdown.innerHTML = results.map(r => `
-                <div class="suggest-item" onclick="executeSearch('${r.suggestion}')">
+                <div class="suggest-item" onclick="executeSearch('${r.suggestion.replace(/'/g, "\\'")}')">
                     <span class="word">${r.suggestion}</span>
                     <span class="meta-badge">~${r.latency_ms.toFixed(2)}ms</span>
                 </div>
@@ -194,15 +358,15 @@
 
         function renderSearchResults(results, originalQuery) {
             const totalLatency = results.reduce((sum, r) => sum + r.latency_ms, 0).toFixed(2);
-            resultsMeta.innerHTML = `为您找到约 ${results.length} 条纠错结果 （总耗时 ${totalLatency} ms）`;
+            resultsMeta.innerHTML = `<span>为您找到约 <b>${results.length}</b> 条精准结果</span><span class="meta-time">总节点耗时 ${totalLatency} ms</span>`;
 
             resultsList.innerHTML = results.map(r => `
                 <div class="result-card">
-                    <a class="intent">${r.word}</a>
+                    <a class="intent" onclick="executeSearch('${r.word.replace(/'/g, "\\'")}')">${r.word}</a>
                     <div class="metrics">
-                        <span>❖ 物理惩罚距离: ${r.distance}</span>
-                        <span>❖ 转移概率得分 (Viterbi): ${r.score.toFixed(4)}</span>
-                        <span>❖ 节点耗时: ${r.latency_ms.toFixed(2)}ms</span>
+                        <span class="metric-pill dist">❖ 物理惩罚距离: ${r.distance}</span>
+                        <span class="metric-pill score">❖ 转移得分 (Viterbi): ${r.score.toFixed(4)}</span>
+                        <span class="metric-pill latency">❖ 耗时: ${r.latency_ms.toFixed(2)}ms</span>
                     </div>
                 </div>
             `).join('');

@@ -19,3 +19,4 @@ hw*
 *docs
 *.png
 *.exe
+*process_data
